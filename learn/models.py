@@ -127,7 +127,7 @@ class BOWPool(BaseModel):
 
 class ConvAttnPool(BaseModel):
 
-    def __init__(self, Y, embed_file, kernel_size, num_filter_maps, lmbda, gpu, dicts, embed_size=100, dropout=0.5, code_emb=None):
+    def __init__(self, Y, embed_file, kernel_size, num_filter_maps, lmbda, gpu, dicts, embed_size=100, dropout=0.5, code_emb=None, static_feat_len = 9, num_static_feat=96):
         super(ConvAttnPool, self).__init__(Y, embed_file, dicts, lmbda, dropout=dropout, gpu=gpu, embed_size=embed_size)
 
         #initialize conv layer as in 2.1
@@ -137,9 +137,18 @@ class ConvAttnPool(BaseModel):
         #context vectors for computing attention as in 2.2
         self.U = nn.Linear(num_filter_maps, Y)
         xavier_uniform(self.U.weight)
+        
+        #static feature integration
+        self.static_embedding = nn.Embedding(num_static_feat, self.embed_size)
+        self.static_mapping = nn.Sequential(
+                nn.Linear ( self.embed_size, num_filter_maps),
+                nn.ReLU ( ),
+                nn.Dropout(0.1)
+                )
+        # self.pooling = nn.AdaptiveMaxPool1d(1)
 
         #final layer: create a matrix to use for the L binary classifiers as in 2.3
-        self.final = nn.Linear(num_filter_maps, Y)
+        self.final = nn.Linear(num_filter_maps + static_feat_len, Y)
         xavier_uniform(self.final.weight)
 
         #initialize with trained code embeddings if applicable
@@ -174,19 +183,61 @@ class ConvAttnPool(BaseModel):
         
     def forward(self, x, target, desc_data=None, get_attention=True):
         #get embeddings and apply dropout
-        x = self.embed(x)
+        x_u = x[0]
+        static = torch.tensor(x[1])
+
+        '''
+         shape of x: 1 * 2500
+        '''
+
+        x = self.embed(x_u)
+        '''
+         shape of x: 1 * 2500 * 100
+        '''
+
         x = self.embed_drop(x)
         x = x.transpose(1, 2)
+        '''
+         shape of x: 1 * 100 * 2500
+        '''
 
         #apply convolution and nonlinearity (tanh)
         x = F.tanh(self.conv(x).transpose(1,2))
+        '''
+         shape of x: 1 * 2500 * 50 [---> H]
+        '''
+
         #apply attention
         alpha = F.softmax(self.U.weight.matmul(x.transpose(1,2)), dim=2)
+        '''
+         shape of alpha: 1 * 50 * 2500
+        '''
+
         #document representations are weighted sums using the attention. Can compute all at once as a matmul
         m = alpha.matmul(x)
+        '''
+         shape of m: 1 * 50 * 50 [--> m = v]
+        '''
+
+        # print(f"\nstatic {static.shape}")
+        static = self.static_embedding(static)
+        # print(f"static after embed {static.shape}")
+        static = self.static_mapping(static)
+        # print(f"static after mapping {static.shape}")
+        # static = self.pooling(static)
+        # print(f"static after pooling {static.shape}")
         #final layer classification
+        # print(f"m {m.shape}")
+        m = torch.cat((m,static),dim=1)
+        # print(f"m {m.shape}")
+        m = m.transpose(1,2)
+        # print(f"m {m.shape}")
+        # print(f"weight {self.final.weight.shape}")
         y = self.final.weight.mul(m).sum(dim=2).add(self.final.bias)
-        
+        '''
+         shape of y: 1 * 50
+        '''
+
         if desc_data is not None:
             #run descriptions through description module
             b_batch = self.embed_descriptions(desc_data, self.gpu)

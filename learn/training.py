@@ -16,7 +16,7 @@ import sys
 import time
 from tqdm import tqdm
 from collections import defaultdict
-
+sys.path.append('/Users/talilaifer/Coursera/UIUC MCS/CS598-DLHC/caml-mimic/')
 from constants import *
 import datasets
 import evaluation
@@ -179,7 +179,7 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
     model.train()
     gen = datasets.data_generator(data_path, dicts, batch_size, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
-        data, target, _, code_set, descs = tup
+        data, target, _, code_set, descs, static = tup
         data, target = Variable(torch.LongTensor(data)), Variable(torch.FloatTensor(target))
         unseen_code_inds = unseen_code_inds.difference(code_set)
         if gpu:
@@ -192,12 +192,12 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
         else:
             desc_data = None
 
-        output, loss, _ = model(data, target, desc_data=desc_data)
+        output, loss, _ = model((data, static), target, desc_data=desc_data)
 
         loss.backward()
         optimizer.step()
 
-        losses.append(loss.data[0])
+        losses.append(loss.data)
 
         if not quiet and batch_idx % print_every == 0:
             #print the average loss of the last 10 batches
@@ -242,7 +242,7 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
     model.eval()
     gen = datasets.data_generator(filename, dicts, 1, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
-        data, target, hadm_ids, _, descs = tup
+        data, target, hadm_ids, _, descs, static = tup
         data, target = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target))
         if gpu:
             data = data.cuda()
@@ -256,11 +256,11 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
 
         #get an attention sample for 2% of batches
         get_attn = samples and (np.random.rand() < 0.02 or (fold == 'test' and testing))
-        output, loss, alpha = model(data, target, desc_data=desc_data, get_attention=get_attn)
+        output, loss, alpha = model((data, static), target, desc_data=desc_data, get_attention=get_attn)
 
         output = F.sigmoid(output)
         output = output.data.cpu().numpy()
-        losses.append(loss.data[0])
+        losses.append(loss.data)
         target_data = target.data.cpu().numpy()
         if get_attn and samples:
             interpret.save_samples(data, output, target_data, alpha, window_size, epoch, tp_file, fp_file, dicts=dicts)

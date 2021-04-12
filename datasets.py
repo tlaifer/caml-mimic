@@ -2,6 +2,7 @@
     Data loading methods
 """
 from collections import defaultdict
+import json
 import csv
 import math
 import numpy as np
@@ -15,6 +16,7 @@ class Batch:
     """
     def __init__(self, desc_embed):
         self.docs = []
+        self.static = []
         self.labels = []
         self.hadm_ids = []
         self.code_set = set()
@@ -23,7 +25,7 @@ class Batch:
         self.desc_embed = desc_embed
         self.descs = []
 
-    def add_instance(self, row, ind2c, c2ind, w2ind, dv_dict, num_labels):
+    def add_instance(self, row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat):
         """
             Makes an instance to add to this batch from given row data, with a bunch of lookups
         """
@@ -60,6 +62,7 @@ class Batch:
 
         #build instance
         self.docs.append(text)
+        self.static.append(static_feat[str(hadm_id)])
         self.labels.append(labels_idx)
         self.hadm_ids.append(hadm_id)
         self.code_set = self.code_set.union(cur_code_set)
@@ -79,7 +82,7 @@ class Batch:
 
     def to_ret(self):
         return np.array(self.docs), np.array(self.labels), np.array(self.hadm_ids), self.code_set,\
-               np.array(self.descs)
+               np.array(self.descs), np.array(self.static)
 
 def pad_desc_vecs(desc_vecs):
     #pad all description vectors in a batch to have the same length
@@ -104,6 +107,9 @@ def data_generator(filename, dicts, batch_size, num_labels, desc_embed=False, ve
             np arrays with data for training loop.
     """
     ind2w, w2ind, ind2c, c2ind, dv_dict = dicts['ind2w'], dicts['w2ind'], dicts['ind2c'], dicts['c2ind'], dicts['dv']
+    static_feat = None
+    with open('/Users/talilaifer/Coursera/UIUC MCS/CS598-DLHC/MIMIC-III/static_feature_dict.json') as f:
+        static_feat = json.load(f)
     with open(filename, 'r') as infile:
         r = csv.reader(infile)
         #header
@@ -116,7 +122,7 @@ def data_generator(filename, dicts, batch_size, num_labels, desc_embed=False, ve
                 yield cur_inst.to_ret()
                 #clear
                 cur_inst = Batch(desc_embed)
-            cur_inst.add_instance(row, ind2c, c2ind, w2ind, dv_dict, num_labels)
+            cur_inst.add_instance(row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat)
         cur_inst.pad_docs()
         yield cur_inst.to_ret()
 

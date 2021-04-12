@@ -35,7 +35,7 @@ def pick_model(args, dicts):
         model = models.BOWPool(Y, args.embed_file, args.lmbda, args.gpu, dicts, args.pool, args.embed_size, args.dropout, args.code_emb)
     if args.test_model:
         sd = torch.load(args.test_model)
-        model.load_state_dict(sd)
+        model.load_state_dict(sd, strict=False)
     if args.gpu:
         model.cuda()
     return model
