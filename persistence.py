@@ -13,9 +13,9 @@ from learn import models
 def save_metrics(metrics_hist_all, model_dir):
     with open(model_dir + "/metrics.json", 'w') as metrics_file:
         #concatenate dev, train metrics into one dict
-        data = metrics_hist_all[0].copy()
-        data.update({"%s_te" % (name):val for (name,val) in metrics_hist_all[1].items()})
-        data.update({"%s_tr" % (name):val for (name,val) in metrics_hist_all[2].items()})
+        data = {"%s" % (name):str(val) for (name,val) in metrics_hist_all[0].items()}
+        data.update({"%s_te" % (name):str(val) for (name,val) in metrics_hist_all[1].items()})
+        data.update({"%s_tr" % (name):str(val) for (name,val) in metrics_hist_all[2].items()})
         json.dump(data, metrics_file, indent=1)
 
 def save_params_dict(params):
