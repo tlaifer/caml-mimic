@@ -16,7 +16,7 @@ import sys
 import time
 from tqdm import tqdm
 from collections import defaultdict
-sys.path.append('/Users/talilaifer/Coursera/UIUC MCS/CS598-DLHC/caml-mimic/')
+sys.path.append('/content/drive/MyDrive/UIUC MCS/CS 598 - DLHC/caml-mimic/')
 from constants import *
 import datasets
 import evaluation
@@ -180,11 +180,12 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
     gen = datasets.data_generator(data_path, dicts, batch_size, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
         data, target, _, code_set, descs, static = tup
-        data, target = Variable(torch.LongTensor(data)), Variable(torch.FloatTensor(target))
+        data, target, static = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target)), Variable(torch.LongTensor(static))
         unseen_code_inds = unseen_code_inds.difference(code_set)
         if gpu:
             data = data.cuda()
             target = target.cuda()
+            static = static.cuda()
         optimizer.zero_grad()
 
         if desc_embed:
@@ -197,7 +198,10 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
         loss.backward()
         optimizer.step()
 
-        losses.append(loss.data)
+        if gpu:
+          losses.append(loss.data.item())
+        else:
+          losses.append(loss.data)
 
         if not quiet and batch_idx % print_every == 0:
             #print the average loss of the last 10 batches
@@ -243,10 +247,11 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
     gen = datasets.data_generator(filename, dicts, 1, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
         data, target, hadm_ids, _, descs, static = tup
-        data, target = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target))
+        data, target, static = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target)), Variable(torch.LongTensor(static))
         if gpu:
             data = data.cuda()
             target = target.cuda()
+            static = static.cuda()
         model.zero_grad()
 
         if desc_embed:
@@ -260,7 +265,11 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
 
         output = F.sigmoid(output)
         output = output.data.cpu().numpy()
-        losses.append(loss.data)
+        
+        if gpu:
+          losses.append(loss.data.item())
+        else:
+          losses.append(loss.data)
         target_data = target.data.cpu().numpy()
         if get_attn and samples:
             interpret.save_samples(data, output, target_data, alpha, window_size, epoch, tp_file, fp_file, dicts=dicts)

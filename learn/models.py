@@ -139,16 +139,19 @@ class ConvAttnPool(BaseModel):
         xavier_uniform(self.U.weight)
         
         #static feature integration
-        self.static_embedding = nn.Embedding(num_static_feat, self.embed_size)
+        self.static_embedding = nn.Embedding(num_static_feat, 10)
+        self.G = nn.Linear(10, Y)
+        xavier_uniform(self.G.weight)
+
         self.static_mapping = nn.Sequential(
-                nn.Linear ( self.embed_size, num_filter_maps),
+                nn.Linear (10, num_filter_maps),
                 nn.ReLU ( ),
                 nn.Dropout(0.1)
                 )
-        # self.pooling = nn.AdaptiveMaxPool1d(1)
+        self.pooling = nn.AdaptiveMaxPool1d(3)
 
         #final layer: create a matrix to use for the L binary classifiers as in 2.3
-        self.final = nn.Linear(num_filter_maps + static_feat_len, Y)
+        self.final = nn.Linear(num_filter_maps + 3, Y)
         xavier_uniform(self.final.weight)
 
         #initialize with trained code embeddings if applicable
@@ -188,6 +191,7 @@ class ConvAttnPool(BaseModel):
 
         '''
          shape of x: 1 * 2500
+         shape of s: 1 * 9
         '''
 
         x = self.embed(x_u)
@@ -221,16 +225,29 @@ class ConvAttnPool(BaseModel):
 
         # print(f"\nstatic {static.shape}")
         static = self.static_embedding(static)
+        '''
+         shape of s: 1 * 9 * 10
+        '''
         # print(f"static after embed {static.shape}")
-        static = self.static_mapping(static)
+        # static = self.static_mapping(static)
+        # print(f"\nstatic  {static.shape}")
+        # print(f"G        {self.G.weight.shape}")
+        gamma = F.softmax(self.G.weight.matmul(static.transpose(1,2)), dim=2)
+        # print(f"gamma    {gamma.shape}")
+        s = gamma.matmul(static)
+        s = self.pooling(s)
+        # print(f"s        {s.shape}")
+        # print(f"m        {m.shape}")
+        m = torch.cat((m, s), dim=2)
+        # print(f"m        {m.shape}")
+
         # print(f"static after mapping {static.shape}")
         # static = self.pooling(static)
         # print(f"static after pooling {static.shape}")
         #final layer classification
         # print(f"m {m.shape}")
-        m = torch.cat((m,static),dim=1)
+        # m = torch.cat((m,static),dim=1)
         # print(f"m {m.shape}")
-        m = m.transpose(1,2)
         # print(f"m {m.shape}")
         # print(f"weight {self.final.weight.shape}")
         y = self.final.weight.mul(m).sum(dim=2).add(self.final.bias)
