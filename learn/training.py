@@ -17,6 +17,7 @@ import time
 from tqdm import tqdm
 from collections import defaultdict
 sys.path.append('/content/drive/MyDrive/UIUC MCS/CS 598 - DLHC/caml-mimic/')
+sys.path.append('/Users/talilaifer/Coursera/UIUC MCS/CS598-DLHC/caml-mimic')
 from constants import *
 import datasets
 import evaluation
@@ -179,13 +180,16 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
     model.train()
     gen = datasets.data_generator(data_path, dicts, batch_size, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
-        data, target, _, code_set, descs, static = tup
-        data, target, static = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target)), Variable(torch.LongTensor(static))
+        data, target, _, code_set, descs, static, meds = tup
+        data, target = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target))
+        static, meds = Variable(torch.LongTensor(static)), Variable(torch.LongTensor(meds))
+
         unseen_code_inds = unseen_code_inds.difference(code_set)
         if gpu:
             data = data.cuda()
             target = target.cuda()
             static = static.cuda()
+            meds = meds.cuda()
         optimizer.zero_grad()
 
         if desc_embed:
@@ -193,7 +197,7 @@ def train(model, optimizer, Y, epoch, batch_size, data_path, gpu, version, dicts
         else:
             desc_data = None
 
-        output, loss, _ = model((data, static), target, desc_data=desc_data)
+        output, loss, _ = model((data, static, meds), target, desc_data=desc_data)
 
         loss.backward()
         optimizer.step()
@@ -246,12 +250,15 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
     model.eval()
     gen = datasets.data_generator(filename, dicts, 1, num_labels, version=version, desc_embed=desc_embed)
     for batch_idx, tup in tqdm(enumerate(gen)):
-        data, target, hadm_ids, _, descs, static = tup
-        data, target, static = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target)), Variable(torch.LongTensor(static))
+        data, target, hadm_ids, _, descs, static, meds = tup
+        data, target = Variable(torch.LongTensor(data), volatile=True), Variable(torch.FloatTensor(target))
+        static, meds = Variable(torch.LongTensor(static)), Variable(torch.LongTensor(meds))
+
         if gpu:
             data = data.cuda()
             target = target.cuda()
             static = static.cuda()
+            meds = meds.cuda()
         model.zero_grad()
 
         if desc_embed:
@@ -261,7 +268,7 @@ def test(model, Y, epoch, data_path, fold, gpu, version, code_inds, dicts, sampl
 
         #get an attention sample for 2% of batches
         get_attn = samples and (np.random.rand() < 0.02 or (fold == 'test' and testing))
-        output, loss, alpha = model((data, static), target, desc_data=desc_data, get_attention=get_attn)
+        output, loss, alpha = model((data, static, meds), target, desc_data=desc_data, get_attention=get_attn)
 
         output = F.sigmoid(output)
         output = output.data.cpu().numpy()
@@ -305,7 +312,7 @@ if __name__ == "__main__":
                         help="path to a file containing sorted train data. dev/test splits assumed to have same name format with 'train' replaced by 'dev' and 'test'")
     parser.add_argument("vocab", type=str, help="path to a file holding vocab word list for discretizing words")
     parser.add_argument("Y", type=str, help="size of label space")
-    parser.add_argument("model", type=str, choices=["cnn_vanilla", "rnn", "conv_attn", "multi_conv_attn", "logreg", "saved"], help="model")
+    parser.add_argument("model", type=str, choices=["cnn_vanilla", "rnn", "conv_attn", "multi_conv_attn", "logreg", "saved", "alpaca"], help="model")
     parser.add_argument("n_epochs", type=int, help="number of epochs to train")
     parser.add_argument("--embed-file", type=str, required=False, dest="embed_file",
                         help="path to a file holding pre-trained embeddings")
@@ -353,6 +360,12 @@ if __name__ == "__main__":
                         help="optional flag to save samples of good / bad predictions")
     parser.add_argument("--quiet", dest="quiet", action="store_const", required=False, const=True,
                         help="optional flag not to print so much during training")
+    parser.add_argument("--meds", type=int, required=False, dest="meds", default=0,
+                        help="whether to include medication prescription data features")
+    parser.add_argument("--med-embed-size", type=int, required=False, dest="med_embed_size", default=100,
+                        help="size of med embedding dimension. (default: 100)")
+    parser.add_argument("--med-pool-size", type=int, required=False, dest="med_pool_size", default=5,
+                        help="size of med pooling. (default: 10)")
     args = parser.parse_args()
     command = ' '.join(['python'] + sys.argv)
     args.command = command

@@ -17,6 +17,7 @@ class Batch:
     def __init__(self, desc_embed):
         self.docs = []
         self.static = []
+        self.meds = []
         self.labels = []
         self.hadm_ids = []
         self.code_set = set()
@@ -25,7 +26,7 @@ class Batch:
         self.desc_embed = desc_embed
         self.descs = []
 
-    def add_instance(self, row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat):
+    def add_instance(self, row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat, meds_feat):
         """
             Makes an instance to add to this batch from given row data, with a bunch of lookups
         """
@@ -60,9 +61,13 @@ class Batch:
         if len(text) > self.max_length:
             text = text[:self.max_length]
 
+        meds_list = meds_feat[str(hadm_id)]
+        # if len(meds_list) == 0:
+        #     return
         #build instance
         self.docs.append(text)
         self.static.append(static_feat[str(hadm_id)])
+        self.meds.append(meds_list)
         self.labels.append(labels_idx)
         self.hadm_ids.append(hadm_id)
         self.code_set = self.code_set.union(cur_code_set)
@@ -81,8 +86,14 @@ class Batch:
         self.docs = padded_docs
 
     def to_ret(self):
+        meds_max_len = 1
+        new_meds = []
+        for med in self.meds:
+            meds_max_len = max(meds_max_len, len(med))
+        for med in self.meds:
+            new_meds.append(np.pad(med, (0, meds_max_len - len(med)), 'constant'))
         return np.array(self.docs), np.array(self.labels), np.array(self.hadm_ids), self.code_set,\
-               np.array(self.descs), np.array(self.static)
+               np.array(self.descs), np.array(self.static), np.array(new_meds)
 
 def pad_desc_vecs(desc_vecs):
     #pad all description vectors in a batch to have the same length
@@ -108,8 +119,10 @@ def data_generator(filename, dicts, batch_size, num_labels, desc_embed=False, ve
     """
     ind2w, w2ind, ind2c, c2ind, dv_dict = dicts['ind2w'], dicts['w2ind'], dicts['ind2c'], dicts['c2ind'], dicts['dv']
     static_feat = None
-    with open('/Users/talilaifer/Coursera/UIUC MCS/CS598-DLHC/MIMIC-III/static_feature_dict.json') as f:
+    with open('static_feature_dict.json') as f:
         static_feat = json.load(f)
+    with open('meds_feature_dict.json') as f:
+        meds_feat = json.load(f)
     with open(filename, 'r') as infile:
         r = csv.reader(infile)
         #header
@@ -122,7 +135,7 @@ def data_generator(filename, dicts, batch_size, num_labels, desc_embed=False, ve
                 yield cur_inst.to_ret()
                 #clear
                 cur_inst = Batch(desc_embed)
-            cur_inst.add_instance(row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat)
+            cur_inst.add_instance(row, ind2c, c2ind, w2ind, dv_dict, num_labels, static_feat, meds_feat)
         cur_inst.pad_docs()
         yield cur_inst.to_ret()
 
