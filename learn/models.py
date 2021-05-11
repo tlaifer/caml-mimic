@@ -125,6 +125,125 @@ class BOWPool(BaseModel):
         loss = self._get_loss(logits, target, diffs)
         return yhat, loss, None
 
+class Alpaca(BaseModel):
+
+    def __init__(self, Y, embed_file, kernel_size, num_filter_maps, lmbda, gpu, dicts, embed_size=100, dropout=0.5, code_emb=None,
+                   num_static_feat=96, meds = False, med_embeding_size=100, med_pool_size=5):
+        super(Alpaca, self).__init__(Y, embed_file, dicts, lmbda, dropout=dropout, gpu=gpu, embed_size=embed_size)
+
+        #initialize conv layer as in 2.1
+        self.conv = nn.Conv1d(self.embed_size, num_filter_maps, kernel_size=kernel_size, padding=int(floor(kernel_size/2)))
+        xavier_uniform(self.conv.weight)
+
+        #context vectors for computing attention as in 2.2
+        self.U = nn.Linear(num_filter_maps, Y)
+        xavier_uniform(self.U.weight)
+        
+        #static feature integration
+        static_embedding_size = 5
+        static_pool_size = 3
+        self.static_embedding = nn.Embedding(num_static_feat, static_embedding_size)
+        self.G = nn.Linear(static_embedding_size, Y)
+        xavier_uniform(self.G.weight)
+        self.pooling = nn.AdaptiveMaxPool1d(static_pool_size)
+
+        #medication feature integration
+        self.meds = meds
+        num_meds = 4198
+        self.med_embedding = nn.Embedding(num_meds, med_embeding_size, padding_idx=0)
+        self.M = nn.Linear(med_embeding_size, Y)
+        xavier_uniform(self.M.weight)
+        self.med_pooling = nn.AdaptiveMaxPool1d(med_pool_size)
+
+        #final layer: create a matrix to use for the L binary classifiers as in 2.3
+        if (self.meds):
+            self.final = nn.Linear(num_filter_maps + static_pool_size + med_pool_size, Y)
+        else:
+            self.final = nn.Linear(num_filter_maps + static_pool_size, Y)
+        xavier_uniform(self.final.weight)
+
+        #initialize with trained code embeddings if applicable
+        if code_emb:
+            self._code_emb_init(code_emb, dicts)
+            #also set conv weights to do sum of inputs
+            weights = torch.eye(self.embed_size).unsqueeze(2).expand(-1,-1,kernel_size)/kernel_size
+            self.conv.weight.data = weights.clone()
+            self.conv.bias.data.zero_()
+        
+        #conv for label descriptions as in 2.5
+        #description module has its own embedding and convolution layers
+        if lmbda > 0:
+            W = self.embed.weight.data
+            self.desc_embedding = nn.Embedding(W.size()[0], W.size()[1], padding_idx=0)
+            self.desc_embedding.weight.data = W.clone()
+
+            self.label_conv = nn.Conv1d(self.embed_size, num_filter_maps, kernel_size=kernel_size, padding=int(floor(kernel_size/2)))
+            xavier_uniform(self.label_conv.weight)
+
+            self.label_fc1 = nn.Linear(num_filter_maps, num_filter_maps)
+            xavier_uniform(self.label_fc1.weight)
+
+    def _code_emb_init(self, code_emb, dicts):
+        code_embs = KeyedVectors.load_word2vec_format(code_emb)
+        weights = np.zeros(self.final.weight.size())
+        for i in range(self.Y):
+            code = dicts['ind2c'][i]
+            weights[i] = code_embs[code]
+        self.U.weight.data = torch.Tensor(weights).clone()
+        self.final.weight.data = torch.Tensor(weights).clone()
+        
+    def forward(self, x, target, desc_data=None, get_attention=True):
+        #get embeddings and apply dropout
+        x_u = x[0]
+        static = x[1].clone().detach()
+        meds = x[2].clone().detach()
+
+        x = self.embed(x_u)
+        x = self.embed_drop(x)
+        x = x.transpose(1, 2)
+        #apply convolution and nonlinearity (tanh)
+        x = F.tanh(self.conv(x).transpose(1,2))
+
+        #apply attention
+        alpha = F.softmax(self.U.weight.matmul(x.transpose(1,2)), dim=2)
+
+        #document representations are weighted sums using the attention. Can compute all at once as a matmul
+        m = alpha.matmul(x)
+        # print(f"\nstatic {static.shape}")
+        static = self.static_embedding(static)
+
+        gamma = F.softmax(self.G.weight.matmul(static.transpose(1,2)), dim=2)
+        s = gamma.matmul(static)
+        s = self.pooling(s)
+
+        if (self.meds):
+            med = self.med_embedding(meds)
+            med = self.M(med)
+            med = F.relu(self.med_pooling(med.transpose(1,2).contiguous()))
+
+            m = torch.cat((m, s, med), dim=2)
+        else:
+            m = torch.cat((m, s), dim=2)
+
+        y = self.final.weight.mul(m).sum(dim=2).add(self.final.bias)
+        '''
+         shape of y: 1 * 50
+        '''
+
+        if desc_data is not None:
+            #run descriptions through description module
+            b_batch = self.embed_descriptions(desc_data, self.gpu)
+            #get l2 similarity loss
+            diffs = self._compare_label_embeddings(target, b_batch, desc_data)
+        else:
+            diffs = None
+            
+        #final sigmoid to get predictions
+        yhat = y
+        loss = self._get_loss(yhat, target, diffs)
+        return yhat, loss, alpha
+
+
 class ConvAttnPool(BaseModel):
 
     def __init__(self, Y, embed_file, kernel_size, num_filter_maps, lmbda, gpu, dicts, embed_size=100, dropout=0.5, code_emb=None):
@@ -174,7 +293,7 @@ class ConvAttnPool(BaseModel):
         
     def forward(self, x, target, desc_data=None, get_attention=True):
         #get embeddings and apply dropout
-        x = self.embed(x)
+        x = self.embed(x[0])
         x = self.embed_drop(x)
         x = x.transpose(1, 2)
 
@@ -199,7 +318,6 @@ class ConvAttnPool(BaseModel):
         yhat = y
         loss = self._get_loss(yhat, target, diffs)
         return yhat, loss, alpha
-
 
 class VanillaConv(BaseModel):
 
