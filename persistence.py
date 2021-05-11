@@ -16,7 +16,6 @@ def save_metrics(metrics_hist_all, model_dir):
         data = {"%s" % (name):str(val) for (name,val) in metrics_hist_all[0].items()}
         data.update({"%s_te" % (name):str(val) for (name,val) in metrics_hist_all[1].items()})
         data.update({"%s_tr" % (name):str(val) for (name,val) in metrics_hist_all[2].items()})
-        print(f"\n data after update {data}")
         json.dump(data, metrics_file, indent=1)
 
 def save_params_dict(params):
