@@ -209,13 +209,15 @@ class Alpaca(BaseModel):
 
         #document representations are weighted sums using the attention. Can compute all at once as a matmul
         m = alpha.matmul(x)
-        # print(f"\nstatic {static.shape}")
+
+        # structured data -- demographic info
         static = self.static_embedding(static)
 
         gamma = F.softmax(self.G.weight.matmul(static.transpose(1,2)), dim=2)
         s = gamma.matmul(static)
         s = self.pooling(s)
 
+        # structured data -- meds
         if (self.meds):
             med = self.med_embedding(meds)
             med = self.M(med)
@@ -225,10 +227,8 @@ class Alpaca(BaseModel):
         else:
             m = torch.cat((m, s), dim=2)
 
+        ## final layer
         y = self.final.weight.mul(m).sum(dim=2).add(self.final.bias)
-        '''
-         shape of y: 1 * 50
-        '''
 
         if desc_data is not None:
             #run descriptions through description module
